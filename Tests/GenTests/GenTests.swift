@@ -5,7 +5,7 @@ final class GenTests: XCTestCase {
   var xoshiro = Xoshiro(seed: 0)
 
   func testMap() {
-    let gen = Gen.bool.map(String.init)
+    let gen = AnyGen.bool.map(String.init)
     XCTAssertEqual("false", gen.run(using: &xoshiro))
   }
 
@@ -16,44 +16,44 @@ final class GenTests: XCTestCase {
   }
 
   func testFlatMap() {
-    let gen = Gen.bool.flatMap { bool in bool ? .always(1) : .always(2) }
+    let gen = AnyGen.bool.flatMap { bool in bool ? .always(1) : .always(2) }
     XCTAssertEqual(2, gen.run(using: &xoshiro))
   }
 
   func testCompactMap() {
-    let gen = Gen.bool.compactMap { bool in bool ? nil : "Compacted!" }
+    let gen = AnyGen.bool.compactMap { bool in bool ? nil : "Compacted!" }
     XCTAssertEqual("Compacted!", gen.run(using: &xoshiro))
   }
 
   func testFilter() {
-    let gen = Gen.bool.filter { bool in !bool }
+    let gen = AnyGen.bool.filter { bool in !bool }
     XCTAssertEqual(false, gen.run(using: &xoshiro))
   }
 
   func testAlways() {
-    let gen = Gen.always(42)
+    let gen = AnyGen.always(42)
     XCTAssertEqual(42, gen.run(using: &xoshiro))
   }
 
   func testArrayOf() {
-    let gen = Gen.int(in: 1...100).array(of: .int(in: 2...10))
+    let gen = AnyGen.int(in: 1...100).array(of: .int(in: 2...10))
     XCTAssertEqual([2, 49, 67], gen.run(using: &xoshiro))
   }
 
   func testArrayOf_DegenerateCase() {
-    let gen = Gen.int(in: 1...100).array(of: .int(in: 0...0))
+    let gen = AnyGen.int(in: 1...100).array(of: .int(in: 0...0))
     XCTAssertEqual([], gen.run(using: &xoshiro))
   }
 
   func testFrequency() {
-    let gen = Gen.frequency((1, .always(1)), (4, .always(nil)))
+    let gen = AnyGen.frequency((1, .always(1)), (4, .always(nil)))
     XCTAssertEqual(
       [1, 1, nil, nil, nil, nil, nil, nil, nil, nil],
       gen.array(of: .always(10)).run(using: &xoshiro))
   }
 
   func testOptional() {
-    let gen = Gen.bool.optional
+    let gen = AnyGen.bool.optional
     XCTAssertEqual(
       [nil, nil, true, false, false, false, false, false, false, nil],
       gen.array(of: .always(10)).run(using: &xoshiro))
@@ -61,7 +61,7 @@ final class GenTests: XCTestCase {
 
   struct Failure: Error, Equatable {}
   func testResult() {
-    let gen = Gen.bool.asResult(withFailure: .always(Failure())).array(of: .always(10))
+    let gen = AnyGen.bool.asResult(withFailure: .always(Failure())).array(of: .always(10))
     XCTAssertEqual(
       [
         .failure(.init()),
@@ -80,33 +80,33 @@ final class GenTests: XCTestCase {
   }
 
   func testElementOf() {
-    XCTAssertEqual("hello", Gen.element(of: ["hello", "goodbye"]).run(using: &xoshiro))
-    XCTAssertEqual("hello", Gen.always(["hello", "goodbye"]).element.run(using: &xoshiro))
+    XCTAssertEqual("hello", AnyGen.element(of: ["hello", "goodbye"]).run(using: &xoshiro))
+    XCTAssertEqual("hello", AnyGen.always(["hello", "goodbye"]).element.run(using: &xoshiro))
   }
 
   func testShuffled() {
     let suit = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
     XCTAssertEqual(
       ["2", "A", "8", "10", "4", "3", "5", "7", "J", "9", "K", "6", "Q"],
-      Gen.shuffled(suit).run(using: &xoshiro))
+      AnyGen.shuffled(suit).run(using: &xoshiro))
     XCTAssertEqual(
       ["K", "7", "A", "6", "4", "9", "Q", "10", "J", "8", "2", "3", "5"],
-      Gen.always(suit).shuffled.run(using: &xoshiro))
+      AnyGen.always(suit).shuffled.run(using: &xoshiro))
   }
 
   func testAllCases() {
     enum Traffic: CaseIterable, Equatable { case green, yellow, red }
-    let gen = Gen<Traffic>.allCases
+    let gen = AnyGen<Traffic>.allCases
     XCTAssertEqual(.green, gen.run(using: &xoshiro))
   }
 
   func testTraverse() {
-    let gen = [Gen.int(in: 1...100), Gen.int(in: 1_000...1_000_000)].traverse(String.init)
+    let gen = [AnyGen.int(in: 1...100), AnyGen.int(in: 1_000...1_000_000)].traverse(String.init)
     XCTAssertEqual(["15", "18473"], gen.run(using: &xoshiro))
   }
 
   func testSequence() {
-    let gen = [Gen.int(in: 1...100), Gen.int(in: 1_000...1_000_000)].sequence()
+    let gen = [AnyGen.int(in: 1...100), AnyGen.int(in: 1_000...1_000_000)].sequence()
     XCTAssertEqual([15, 18473], gen.run(using: &xoshiro))
   }
 

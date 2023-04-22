@@ -4,16 +4,22 @@ import XCTest
 final class GenPerformanceTests: XCTestCase {
     @available(macOS 13.0, *)
     func testPerformance() {
-        let anyGen = Gen.bool
+        let anyGen = AnyGen.bool
             .flatMap { $0 ? .letter : .number }
-            .string(of: Gen.int(in: 10...20))
-            .array(of: Gen.int(in: 5...10))
+            .string(of: AnyGen.int(in: 10...20))
+            .array(of: AnyGen.int(in: 5...10))
             .map { $0.joined(separator: " ") }
+            .map { $0 }
+            .flatMap { Always($0) }
+            .map { $0 }
         let protoGen = Bool.Generator()
             .flatMap { $0 ? Gens.letter : Gens.number }
             .string(of: Int.generator(in: 10...20))
             .array(of: Int.generator(in: 5...10))
             .map { $0.joined(separator: " ") }
+            .map { $0 }
+            .flatMap { Always($0) }
+            .map { $0 }
 
         let clock = SuspendingClock()
         let repeatCount = 10_000

@@ -1,5 +1,5 @@
 /// A composable, transformable context for generating random values.
-public struct Gen<Value>: GenProtocol {
+public struct AnyGen<Value>: Gen {
     @usableFromInline
     internal var _run: (inout any RandomNumberGenerator) -> Value
 
@@ -20,14 +20,14 @@ public struct Gen<Value>: GenProtocol {
     }
 }
 
-extension Gen {
+extension AnyGen {
     /// Produces a generator that always returns the same, constant value.
     ///
     /// - Parameter value: A constant value.
     /// - Returns: A generator of a constant value.
     @inlinable
-    public static func always(_ value: Value) -> Gen {
-        return Gen { _ in value }
+    public static func always(_ value: Value) -> AnyGen {
+        return AnyGen { _ in value }
     }
 
     /// Transforms a generator of `Value`s into a generator of `NewValue`s by applying a transformation.
@@ -35,8 +35,8 @@ extension Gen {
     /// - Parameter transform: A function that transforms `Value`s into `NewValue`s.
     /// - Returns: A generator of `NewValue`s.
     @inlinable
-    public func map<NewValue>(_ transform: @escaping (Value) -> NewValue) -> Gen<NewValue> {
-        return Gen<NewValue> { rng in transform(self._run(&rng)) }
+    public func map<NewValue>(_ transform: @escaping (Value) -> NewValue) -> AnyGen<NewValue> {
+        return AnyGen<NewValue> { rng in transform(self._run(&rng)) }
     }
 }
 
@@ -47,20 +47,20 @@ extension Gen {
 ///   - b: A generator of `B`s.
 /// - Returns: A generator of `(A, B)` pairs.
 @inlinable
-public func zip<A, B>(_ a: Gen<A>, _ b: Gen<B>) -> Gen<(A, B)> {
-    return Gen<(A, B)> { rng in
+public func zip<A, B>(_ a: AnyGen<A>, _ b: AnyGen<B>) -> AnyGen<(A, B)> {
+    return AnyGen<(A, B)> { rng in
         (a._run(&rng), b._run(&rng))
     }
 }
 
-extension Gen {
+extension AnyGen {
     /// Transforms a generator of `Value`s into a generator of `NewValue`s by transforming a value into a generator of `NewValue`s.
     ///
     /// - Parameter transform: A function that transforms `Value`s into a generator of `NewValue`s.
     /// - Returns: A generator of `NewValue`s.
     @inlinable
-    public func flatMap<NewValue>(_ transform: @escaping (Value) -> Gen<NewValue>) -> Gen<NewValue> {
-        return Gen<NewValue> { rng in
+    public func flatMap<NewValue>(_ transform: @escaping (Value) -> AnyGen<NewValue>) -> AnyGen<NewValue> {
+        return AnyGen<NewValue> { rng in
             transform(self._run(&rng))._run(&rng)
         }
     }
@@ -70,8 +70,8 @@ extension Gen {
     /// - Parameter transform: A closure that accepts an element of this sequence as its argument and returns an optional value.
     /// - Returns: A generator of the non-nil results of calling the given transformation with a value of the generator.
     @inlinable
-    public func compactMap<NewValue>(_ transform: @escaping (Value) -> NewValue?) -> Gen<NewValue> {
-        return Gen<NewValue> { rng in
+    public func compactMap<NewValue>(_ transform: @escaping (Value) -> NewValue?) -> AnyGen<NewValue> {
+        return AnyGen<NewValue> { rng in
             while true {
                 if let value = transform(self._run(&rng)) {
                     return value
@@ -85,192 +85,192 @@ extension Gen {
     /// - Parameter predicate: A predicate.
     /// - Returns: A generator of values that match the predicate.
     @inlinable
-    public func filter(_ predicate: @escaping (Value) -> Bool) -> Gen<Value> {
+    public func filter(_ predicate: @escaping (Value) -> Bool) -> AnyGen<Value> {
         return self.compactMap { predicate($0) ? $0 : nil }
     }
 
     /// Uses a weighted distribution to randomly select one of the generators in the list.
     @inlinable
-    public static func frequency(_ distribution: (Int, Gen)...) -> Gen {
+    public static func frequency(_ distribution: (Int, AnyGen)...) -> AnyGen {
         return frequency(distribution)
     }
 
     /// Uses a weighted distribution to randomly select one of the generators in the list.
     @inlinable
-    public static func frequency(_ distribution: [(Int, Gen)]) -> Gen {
+    public static func frequency(_ distribution: [(Int, AnyGen)]) -> AnyGen {
         // TODO: Add `!distribution.isEmpty` precondition?
         let generators = distribution.flatMap { Array(repeating: $1, count: $0) }
-        return Gen { rng in
-            Gen<Int>.int(in: 0...generators.count - 1)
+        return AnyGen { rng in
+            AnyGen<Int>.int(in: 0...generators.count - 1)
                 .flatMap { idx in generators[idx] }
                 .run(using: &rng)
         }
     }
 }
 
-extension Gen where Value: FixedWidthInteger {
+extension AnyGen where Value: FixedWidthInteger {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func int(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in Value.random(in: range, using: &rng) }
+    public static func int(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in Value.random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value: BinaryFloatingPoint, Value.RawSignificand: FixedWidthInteger {
+extension AnyGen where Value: BinaryFloatingPoint, Value.RawSignificand: FixedWidthInteger {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func float(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in Value.random(in: range, using: &rng) }
+    public static func float(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in Value.random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value == Int {
+extension AnyGen where Value == Int {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func int(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func int(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value == Int8 {
+extension AnyGen where Value == Int8 {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func int8(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func int8(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value == Int16 {
+extension AnyGen where Value == Int16 {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func int16(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func int16(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value == Int32 {
+extension AnyGen where Value == Int32 {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func int32(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func int32(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value == Int64 {
+extension AnyGen where Value == Int64 {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func int64(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func int64(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value == UInt {
+extension AnyGen where Value == UInt {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func uint(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func uint(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value == UInt8 {
+extension AnyGen where Value == UInt8 {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func uint8(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func uint8(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value == UInt16 {
+extension AnyGen where Value == UInt16 {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func uint16(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func uint16(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value == UInt32 {
+extension AnyGen where Value == UInt32 {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func uint32(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func uint32(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value == UInt64 {
+extension AnyGen where Value == UInt64 {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func uint64(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func uint64(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value == Double {
+extension AnyGen where Value == Double {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func double(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func double(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 
-extension Gen where Value == Float {
+extension AnyGen where Value == Float {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func float32(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func float32(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 
 #if !(os(Windows) || os(Android)) && (arch(i386) || arch(x86_64))
-extension Gen where Value == Float80 {
+extension AnyGen where Value == Float80 {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func float80(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func float80(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 #endif
@@ -278,74 +278,74 @@ extension Gen where Value == Float80 {
 #if canImport(CoreGraphics)
 import CoreGraphics
 
-extension Gen where Value == CGFloat {
+extension AnyGen where Value == CGFloat {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func cgFloat(in range: ClosedRange<Value>) -> Gen {
-        return Gen { rng in .random(in: range, using: &rng) }
+    public static func cgFloat(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen { rng in .random(in: range, using: &rng) }
     }
 }
 #endif
 
-extension Gen where Value == Bool {
+extension AnyGen where Value == Bool {
     /// A generator of random boolean values.
-    public static let bool = Gen { rng in Bool.random(using: &rng) }
+    public static let bool = AnyGen { rng in Bool.random(using: &rng) }
 }
 
-extension Gen {
+extension AnyGen {
     /// Produces a generator of random elements of this generator's collection.
     ///
     /// - Parameter collection: A collection.
     @inlinable
-    public static func element<C>(of collection: C) -> Gen where C: Collection, Value == C.Element? {
-        return Gen { rng in collection.randomElement(using: &rng) }
+    public static func element<C>(of collection: C) -> AnyGen where C: Collection, Value == C.Element? {
+        return AnyGen { rng in collection.randomElement(using: &rng) }
     }
     
     /// Produces a generator of shuffled arrays of this generator's collection.
     ///
     /// - Parameter collection: A collection.
     @inlinable
-    public static func shuffled<C>(_ collection: C) -> Gen where C: Collection, Value == [C.Element] {
-        return Gen { rng in collection.shuffled(using: &rng) }
+    public static func shuffled<C>(_ collection: C) -> AnyGen where C: Collection, Value == [C.Element] {
+        return AnyGen { rng in collection.shuffled(using: &rng) }
     }
 }
 
-extension Gen where Value: Collection {
+extension AnyGen where Value: Collection {
     /// Produces a generator of random elements of this generator's collection.
     @inlinable
-    public var element: Gen<Value.Element?> {
-        return self.flatMap(Gen<Value.Element?>.element)
+    public var element: AnyGen<Value.Element?> {
+        return self.flatMap(AnyGen<Value.Element?>.element)
     }
 
     /// Produces a generator of shuffled arrays of this generator's collection.
     @inlinable
-    public var shuffled: Gen<[Value.Element]> {
-        return self.flatMap(Gen<[Value.Element]>.shuffled)
+    public var shuffled: AnyGen<[Value.Element]> {
+        return self.flatMap(AnyGen<[Value.Element]>.shuffled)
     }
 }
 
-extension Gen where Value: CaseIterable {
+extension AnyGen where Value: CaseIterable {
     /// Produces a generator of all case-iterable cases.
     @inlinable
-    public static var allCases: Gen<Value> {
-        return Gen<Value.AllCases>.always(Value.allCases).element.map { $0! }
+    public static var allCases: AnyGen<Value> {
+        return AnyGen<Value.AllCases>.always(Value.allCases).element.map { $0! }
     }
 }
 
-extension Gen {
+extension AnyGen {
     /// Produces a new generator of collections of this generator's values.
     ///
     /// - Parameter count: The size of the random collection.
     /// - Returns: A generator of collections.
     @inlinable
-    public func collection<C>(of count: Gen<Int>) -> Gen<C>
+    public func collection<C>(of count: AnyGen<Int>) -> AnyGen<C>
     where C: RangeReplaceableCollection, C.Element == Value {
         return count.flatMap { count in
             guard count > 0 else { return .always(C()) }
-            return Gen<C> { rng in
+            return AnyGen<C> { rng in
                 var collection = C()
                 guard count > 0 else { return collection }
                 collection.reserveCapacity(count)
@@ -362,10 +362,10 @@ extension Gen {
     /// - Parameter count: The size of the random array.
     /// - Returns: A generator of arrays.
     @inlinable
-    public func array(of count: Gen<Int>) -> Gen<[Value]> {
+    public func array(of count: AnyGen<Int>) -> AnyGen<[Value]> {
         return count.flatMap { count in
             guard count > 0 else { return .always([]) }
-            return Gen<[Value]> { rng in
+            return AnyGen<[Value]> { rng in
                 var array: [Value] = []
                 array.reserveCapacity(count)
                 for _ in 0..<count {
@@ -381,10 +381,10 @@ extension Gen {
     /// - Parameter count: The size of the random dictionary.
     /// - Returns: A generator of dictionaries.
     @inlinable
-    public func dictionary<K, V>(ofAtMost count: Gen<Int>) -> Gen<[K: V]> where Value == (K, V) {
+    public func dictionary<K, V>(ofAtMost count: AnyGen<Int>) -> AnyGen<[K: V]> where Value == (K, V) {
         return count.flatMap { count in
             guard count > 0 else { return .always([:]) }
-            return Gen<[K: V]> { rng in
+            return AnyGen<[K: V]> { rng in
                 var dictionary: [K: V] = [:]
                 dictionary.reserveCapacity(count)
                 for _ in 1...count {
@@ -401,10 +401,10 @@ extension Gen {
     /// - Parameter count: The size of the random set.
     /// - Returns: A generator of sets.
     @inlinable
-    public func set<S>(ofAtMost count: Gen<Int>) -> Gen<S> where S: SetAlgebra, S.Element == Value {
+    public func set<S>(ofAtMost count: AnyGen<Int>) -> AnyGen<S> where S: SetAlgebra, S.Element == Value {
         return count.flatMap { count in
             guard count > 0 else { return .always(S()) }
-            return Gen<S> { rng in
+            return AnyGen<S> { rng in
                 var set = S()
                 for _ in 1...count {
                     set.insert(self._run(&rng))
@@ -418,9 +418,9 @@ extension Gen {
     ///
     /// - Returns: A generator of optional values.
     @inlinable
-    public var optional: Gen<Value?> {
-        return Gen<Value?>.frequency(
-            (1, Gen<Value?>.always(Value?.none)),
+    public var optional: AnyGen<Value?> {
+        return AnyGen<Value?>.frequency(
+            (1, AnyGen<Value?>.always(Value?.none)),
             (3, self.map(Value?.some))  // TODO: Change to use `size` with resizable generators?
         )
     }
@@ -429,24 +429,24 @@ extension Gen {
     ///
     /// - Returns: A generator of failable values.
     @inlinable
-    public func asResult<Failure>(withFailure gen: Gen<Failure>) -> Gen<Result<Value, Failure>> {
-        return Gen<Result<Value, Failure>>.frequency(
+    public func asResult<Failure>(withFailure gen: AnyGen<Failure>) -> AnyGen<Result<Value, Failure>> {
+        return AnyGen<Result<Value, Failure>>.frequency(
             (1, gen.map(Result.failure)),
             (3, self.map(Result.success))  // TODO: Change to use `size` with resizable generators?
         )
     }
 }
 
-extension Gen where Value: Hashable {
+extension AnyGen where Value: Hashable {
     /// Produces a new generator of sets of this generator's values.
     ///
     /// - Parameter count: The size of the random set.
     /// - Returns: A generator of sets.
     @inlinable
-    public func set(ofAtMost count: Gen<Int>) -> Gen<Set<Value>> {
+    public func set(ofAtMost count: AnyGen<Int>) -> AnyGen<Set<Value>> {
         return count.flatMap { count in
             guard count > 0 else { return .always([]) }
-            return Gen<Set<Value>> { rng in
+            return AnyGen<Set<Value>> { rng in
                 var set: Set<Value> = []
                 for _ in 1...count {
                     set.insert(self._run(&rng))
@@ -457,28 +457,28 @@ extension Gen where Value: Hashable {
     }
 }
 
-extension Gen where Value == UnicodeScalar {
+extension AnyGen where Value == UnicodeScalar {
     /// Returns a generator of random unicode scalars within the specified range.
     ///
     /// - Parameter range: The range in which to create a random unicode scalar. `range` must be finite.
     /// - Returns: A generator of random unicode scalars within the bounds of range.
     @inlinable
-    public static func unicodeScalar(in range: ClosedRange<Value>) -> Gen {
-        return Gen<UInt32>
+    public static func unicodeScalar(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen<UInt32>
             .int(in: range.lowerBound.value...range.upperBound.value)
             .map { UnicodeScalar($0)! }
     }
 }
 
-extension Gen where Value == Character {
+extension AnyGen where Value == Character {
     // FIXME: Make safe for characters with multiple scalars.
     /// Returns a generator of random characters within the specified range.
     ///
     /// - Parameter range: The range in which to create a random character. `range` must be finite.
     /// - Returns: A generator of random characters within the bounds of range.
     @inlinable
-    public static func character(in range: ClosedRange<Value>) -> Gen {
-        return Gen<UnicodeScalar>
+    public static func character(in range: ClosedRange<Value>) -> AnyGen {
+        return AnyGen<UnicodeScalar>
             .unicodeScalar(
                 in: range.lowerBound.unicodeScalars.first!...range.upperBound.unicodeScalars.last!
             )
@@ -486,32 +486,32 @@ extension Gen where Value == Character {
     }
 
     /// A generator of random numeric digits.
-    public static let number = Gen.character(in: "0"..."9")
+    public static let number = AnyGen.character(in: "0"..."9")
 
     /// A generator of uppercase letters.
-    public static let uppercaseLetter = Gen.character(in: "A"..."Z")
+    public static let uppercaseLetter = AnyGen.character(in: "A"..."Z")
 
     /// A generator of lowercase letters.
-    public static let lowercaseLetter = Gen.character(in: "a"..."z")
+    public static let lowercaseLetter = AnyGen.character(in: "a"..."z")
 
     /// A generator of uppercase and lowercase letters.
-    public static let letter = Gen<Character?>
+    public static let letter = AnyGen<Character?>
         .element(of: Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") as [Character])
         .map { $0! }
 
     /// A generator of letters and numbers.
-    public static let letterOrNumber = Gen<Character?>
+    public static let letterOrNumber = AnyGen<Character?>
         .element(
             of: Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") as [Character]
         )
         .map { $0! }
 
     /// A generator of ASCII characters.
-    public static let ascii = Gen<UInt32>.int(in: 0...127)
+    public static let ascii = AnyGen<UInt32>.int(in: 0...127)
         .map { UnicodeScalar($0)! }
 
     /// A generator of Latin-1 characters.
-    public static let latin1 = Gen<UInt32>.int(in: 0...255)
+    public static let latin1 = AnyGen<UInt32>.int(in: 0...255)
         .map { UnicodeScalar($0)! }
 
     /// Produces a new generator of strings of this generator's characters.
@@ -519,7 +519,7 @@ extension Gen where Value == Character {
     /// - Parameter count: The size of the random string.
     /// - Returns: A generator of strings.
     @inlinable
-    public func string(of count: Gen<Int>) -> Gen<String> {
+    public func string(of count: AnyGen<Int>) -> AnyGen<String> {
         return self.map(String.init).array(of: count).map { $0.joined() }
     }
 }
@@ -530,8 +530,8 @@ extension Sequence {
     /// - Parameter transform: A transform function to apply to the value of each generator.
     /// - Returns: A generator of arrays.
     @inlinable
-    public func traverse<A, B>(_ transform: @escaping (A) -> B) -> Gen<[B]> where Element == Gen<A> {
-        return Gen<[B]> { rng in
+    public func traverse<A, B>(_ transform: @escaping (A) -> B) -> AnyGen<[B]> where Element == AnyGen<A> {
+        return AnyGen<[B]> { rng in
             self.map { transform($0.run(using: &rng)) }
         }
     }
@@ -540,7 +540,7 @@ extension Sequence {
     ///
     /// - Returns: A generator of arrays.
     @inlinable
-    public func sequence<A>() -> Gen<[A]> where Element == Gen<A> {
+    public func sequence<A>() -> AnyGen<[A]> where Element == AnyGen<A> {
         return self.traverse { $0 }
     }
 }

@@ -1,10 +1,10 @@
-public protocol GenProtocol<Value> {
+public protocol Gen<Value> {
     associatedtype Value
 
     func run<RNG: RandomNumberGenerator>(using rng: inout RNG) -> Value
 }
 
-extension GenProtocol {
+extension Gen {
     @inlinable
     public func run() -> Value {
         var srng = SystemRandomNumberGenerator()
@@ -16,7 +16,7 @@ extension GenProtocol {
 ///
 /// - Parameter value: A constant value.
 /// - Returns: A generator of a constant value.
-public struct Always<Value>: GenProtocol {
+public struct Always<Value>: Gen {
     public let value: Value
 
     @inlinable
@@ -33,7 +33,7 @@ public struct Always<Value>: GenProtocol {
 public enum Gens {}
 
 extension Gens {
-    public struct Map<Upstream: GenProtocol, Value>: GenProtocol {
+    public struct Map<Upstream: Gen, Value>: Gen {
         public let upstream: Upstream
         public let transform: @Sendable (Upstream.Value) -> Value
 
@@ -52,7 +52,7 @@ extension Gens {
 
 extension Gens.Map: Sendable where Upstream: Sendable {}
 
-extension GenProtocol {
+extension Gen {
     /// Transforms a generator of `Value`s into a generator of `NewValue`s by applying a transformation.
     ///
     /// - Parameter transform: A function that transforms `Value`s into `NewValue`s.
@@ -66,7 +66,7 @@ extension GenProtocol {
 }
 
 extension Gens {
-    public struct Zip2<A: GenProtocol, B: GenProtocol>: GenProtocol {
+    public struct Zip2<A: Gen, B: Gen>: Gen {
         public let a: A
         public let b: B
 
@@ -91,12 +91,12 @@ extension Gens.Zip2: Sendable where A: Sendable, B: Sendable {}
 ///   - b: A generator of `B`s.
 /// - Returns: A generator of `(A, B)` pairs.
 @inlinable
-public func zip<A: GenProtocol, B: GenProtocol>(_ a: A, _ b: B) -> Gens.Zip2<A, B> {
+public func zip<A: Gen, B: Gen>(_ a: A, _ b: B) -> Gens.Zip2<A, B> {
     .init(a: a, b: b)
 }
 
 extension Gens {
-    public struct FlatMap<Upstream: GenProtocol, NewValue: GenProtocol>: GenProtocol {
+    public struct FlatMap<Upstream: Gen, NewValue: Gen>: Gen {
         @inlinable internal init(
             upstream: Upstream,
             transform: @escaping @Sendable (Upstream.Value) -> NewValue
@@ -117,12 +117,12 @@ extension Gens {
 
 extension Gens.FlatMap: Sendable where Upstream: Sendable {}
 
-extension GenProtocol {
+extension Gen {
     /// Transforms a generator of `Value`s into a generator of `NewValue`s by transforming a value into a generator of `NewValue`s.
     ///
     /// - Parameter transform: A function that transforms `Value`s into a generator of `NewValue`s.
     /// - Returns: A generator of `NewValue`s.
-    @inlinable public func flatMap<NewGen: GenProtocol>(
+    @inlinable public func flatMap<NewGen: Gen>(
         _ transform: @escaping @Sendable (Value) -> NewGen
     ) -> Gens.FlatMap<Self, NewGen> {
         .init(upstream: self, transform: transform)
@@ -130,7 +130,7 @@ extension GenProtocol {
 }
 
 extension Gens {
-    public struct Compact<Upstream: GenProtocol, Value>: GenProtocol
+    public struct Compact<Upstream: Gen, Value>: Gen
     where Upstream.Value == Value? {
         @inlinable internal init(upstream: Upstream) {
             self.upstream = upstream
@@ -150,7 +150,7 @@ extension Gens {
 
 extension Gens.Compact: Sendable where Upstream: Sendable {}
 
-extension GenProtocol {
+extension Gen {
     /// Returns a generator of the non-nil results of the given generator.
     @inlinable public func compact<Wrapped>() -> Gens.Compact<Self, Wrapped> where Value == Wrapped? {
         .init(upstream: self)
@@ -168,7 +168,7 @@ extension GenProtocol {
 }
 
 extension Gens {
-    public struct Filter<Upstream: GenProtocol>: GenProtocol {
+    public struct Filter<Upstream: Gen>: Gen {
         @inlinable internal init(
             upstream: Upstream,
             predicate: @escaping @Sendable (Upstream.Value) -> Bool
@@ -193,7 +193,7 @@ extension Gens {
 
 extension Gens.Filter: Sendable where Upstream: Sendable {}
 
-extension GenProtocol {
+extension Gen {
     /// Produces a generator of values that match the predicate.
     ///
     /// - Parameter predicate: A predicate.
@@ -205,7 +205,7 @@ extension GenProtocol {
 }
 
 /// Uses a weighted distribution to randomly select one of the generators in the list.
-public struct Frequency<Upstream: GenProtocol>: GenProtocol {
+public struct Frequency<Upstream: Gen>: Gen {
     public let generators: [Upstream]
 
     /// Uses a weighted distribution to randomly select one of the generators in the list.
@@ -250,7 +250,7 @@ extension BinaryFloatingPoint where RawSignificand: FixedWidthInteger {
 }
 
 extension Gens {
-    public struct Integer<Value: FixedWidthInteger>: GenProtocol {
+    public struct Integer<Value: FixedWidthInteger>: Gen {
         @inlinable
         internal init(range: ClosedRange<Value>) {
             self.range = range
@@ -264,7 +264,7 @@ extension Gens {
         }
     }
 
-    public struct Float<Value: BinaryFloatingPoint>: GenProtocol
+    public struct Float<Value: BinaryFloatingPoint>: Gen
     where Value.RawSignificand: FixedWidthInteger {
         @inlinable internal init(range: ClosedRange<Value>) {
             self.range = range
@@ -283,7 +283,7 @@ extension Gens.Integer: Sendable where Value: Sendable {}
 extension Gens.Float: Sendable where Value: Sendable {}
 
 extension Bool {
-    public struct Generator: GenProtocol, Sendable {
+    public struct Generator: Gen, Sendable {
         @inlinable
         public init() {}
 
@@ -294,7 +294,7 @@ extension Bool {
     }
 }
 
-public struct ElementOf<C: Collection>: GenProtocol {
+public struct ElementOf<C: Collection>: Gen {
     public let collection: C
 
     @inlinable
@@ -310,7 +310,7 @@ public struct ElementOf<C: Collection>: GenProtocol {
 
 extension ElementOf: Sendable where C: Sendable {}
 
-public struct Shuffled<C: Collection>: GenProtocol {
+public struct Shuffled<C: Collection>: Gen {
     public let collection: C
 
     @inlinable
@@ -326,7 +326,7 @@ public struct Shuffled<C: Collection>: GenProtocol {
 
 extension Shuffled: Sendable where C: Sendable {}
 
-extension GenProtocol where Value: Collection {
+extension Gen where Value: Collection {
     public var element: Gens.FlatMap<Self, ElementOf<Value>> {
         self.flatMap { ElementOf($0) }
     }
@@ -352,10 +352,10 @@ extension RangeReplaceableCollection {
 
 extension Gens {
     public struct Reduce<
-        Upstream: GenProtocol,
-        InitialValue: GenProtocol,
-        Count: GenProtocol
-    >: GenProtocol where Count.Value: FixedWidthInteger {
+        Upstream: Gen,
+        InitialValue: Gen,
+        Count: Gen
+    >: Gen where Count.Value: FixedWidthInteger {
         @inlinable
         internal init(
             upstream: Upstream,
@@ -391,11 +391,11 @@ extension Gens.Reduce: Sendable where Upstream: Sendable, InitialValue: Sendable
 
 extension Gens {
     public struct EitherGenerator<
-        A: GenProtocol,
-        B: GenProtocol,
-        ACount: GenProtocol<Int>,
-        BCount: GenProtocol<Int>
-    >: GenProtocol {
+        A: Gen,
+        B: Gen,
+        ACount: Gen<Int>,
+        BCount: Gen<Int>
+    >: Gen {
         @inlinable internal init(aCount: ACount, bCount: BCount, a: A, b: B) {
             self.aCount = aCount
             self.bCount = bCount
@@ -434,10 +434,10 @@ where ACount: Sendable, BCount: Sendable, A: Sendable, B: Sendable {}
 extension Either {
     @inlinable
     public static func generator<
-        LeftGen: GenProtocol<Left>,
-        RightGen: GenProtocol<Right>,
-        LeftCount: GenProtocol<Int>,
-        RightCount: GenProtocol<Int>
+        LeftGen: Gen<Left>,
+        RightGen: Gen<Right>,
+        LeftCount: Gen<Int>,
+        RightCount: Gen<Int>
     >(
         left: LeftGen,
         right: RightGen,
@@ -448,9 +448,9 @@ extension Either {
     }
 }
 
-extension GenProtocol {
+extension Gen {
     @inlinable
-    public func reduce<Count: GenProtocol, InitialValue: GenProtocol>(
+    public func reduce<Count: Gen, InitialValue: Gen>(
         count: Count,
         into initialValue: @escaping @Sendable (Count.Value) -> InitialValue,
         _ accumulate: @escaping @Sendable (inout InitialValue.Value, Value) -> Void
@@ -459,7 +459,7 @@ extension GenProtocol {
     }
 
     @inlinable
-    public func reduce<Count: GenProtocol, NewValue>(
+    public func reduce<Count: Gen, NewValue>(
         count: Count,
         into initialValue: @escaping @Sendable (Count.Value) -> NewValue,
         _ accumulate: @escaping @Sendable (inout NewValue, Value) -> Void
@@ -473,7 +473,7 @@ extension GenProtocol {
     }
 
     @inlinable
-    public func reduce<Count: GenProtocol, InitialValue: GenProtocol>(
+    public func reduce<Count: Gen, InitialValue: Gen>(
         count: Count,
         into initialValue: @escaping @Sendable @autoclosure () -> InitialValue,
         _ accumulate: @escaping @Sendable (inout InitialValue.Value, Value) -> Void
@@ -482,7 +482,7 @@ extension GenProtocol {
     }
 
     @inlinable
-    public func reduce<Count: GenProtocol, InitialValue>(
+    public func reduce<Count: Gen, InitialValue>(
         count: Count,
         into initialValue: @escaping @Sendable @autoclosure () -> InitialValue,
         _ accumulate: @escaping @Sendable (inout InitialValue, Value) -> Void
@@ -491,7 +491,7 @@ extension GenProtocol {
     }
 
     @inlinable
-    public func array<Count: GenProtocol<Int>>(
+    public func array<Count: Gen<Int>>(
         of count: Count
     ) -> Gens.Reduce<Self, Always<[Self.Value]>, Count> {
        self.reduce(count: count, into: { Array(reservingCapacity: $0) }) { output, item in
@@ -500,7 +500,7 @@ extension GenProtocol {
     }
 
     @inlinable
-    public func dictionary<K: Hashable, V, Count: GenProtocol<Int>>(
+    public func dictionary<K: Hashable, V, Count: Gen<Int>>(
         ofAtMost count: Count
     ) -> Gens.Reduce<Self, Always<Dictionary<K, V>>, Count>
     where Value == (key: K, value: V) {
@@ -517,7 +517,7 @@ extension GenProtocol {
     ///
     /// - Returns: A generator of optional values.
     @inlinable
-    public func `optional`<Some: GenProtocol<Int>, None: GenProtocol<Int>>(
+    public func `optional`<Some: Gen<Int>, None: Gen<Int>>(
         some someDistribution: Some = Always(3),
         none noneDistribution: None = Always(1)
     ) -> Gens.Map<Gens.EitherGenerator<Self, Always<()>, Some, None>, Self.Value?> {
@@ -539,9 +539,9 @@ extension GenProtocol {
     /// - Returns: A generator of failable values.
     @inlinable
     public func asResult<
-        Failure: GenProtocol,
-        SuccessCount: GenProtocol<Int>,
-        FailureCount: GenProtocol<Int>
+        Failure: Gen,
+        SuccessCount: Gen<Int>,
+        FailureCount: Gen<Int>
     >(
         withFailure failure: Failure,
         successDistribution: SuccessCount = Always(3),
@@ -615,9 +615,9 @@ extension Gens {
     public static let latin1 = UnicodeScalar.generator(inNumericRange: 0...255)
 }
 
-extension GenProtocol where Value == Character {
+extension Gen where Value == Character {
     @inlinable
-    public func string<Count: GenProtocol<Int>>(
+    public func string<Count: Gen<Int>>(
         of count: Count
     ) -> Gens.Reduce<Self, Always<String>, Count> {
         self.reduce(count: count, into: { String(reservingCapacity: $0) }) { $0.append($1) }
@@ -625,8 +625,8 @@ extension GenProtocol where Value == Character {
 }
 
 extension Gens {
-    public struct Traverse<Input: Sequence, NewElement>: GenProtocol
-    where Input.Element: GenProtocol {
+    public struct Traverse<Input: Sequence, NewElement>: Gen
+    where Input.Element: Gen {
         public let input: Input
         public let transform: @Sendable (Input.Element.Value) -> NewElement
 
@@ -645,7 +645,7 @@ extension Gens {
 
 extension Gens.Traverse: Sendable where Input: Sendable {}
 
-extension Sequence where Element: GenProtocol {
+extension Sequence where Element: Gen {
     /// Transforms each value of an array of generators before rewrapping the array in an array generator.
     ///
     /// - Parameter transform: A transform function to apply to the value of each generator.
