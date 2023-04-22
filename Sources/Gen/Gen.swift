@@ -1,57 +1,88 @@
-/// A composable, transformable context for generating random values.
-public struct Gen<Value> {
-  @usableFromInline
-  internal var _run: (inout AnyRandomNumberGenerator) -> Value
+public protocol GenProtocol<Value> {
+    associatedtype Value
 
-  @inlinable
-  public init(run: @escaping (inout AnyRandomNumberGenerator) -> Value) {
-    self._run = run
-  }
+    func run<RNG: RandomNumberGenerator>(using rng: inout RNG) -> Value
+}
 
-  /// Returns a random value.
-  ///
-  /// - Parameter rng: A random number generator.
-  /// - Returns: A random value.
-  @inlinable
-  public func run<G: RandomNumberGenerator>(using rng: inout G) -> Value {
-    if var arng = rng as? AnyRandomNumberGenerator {
-      defer { rng = arng as! G }
-      return self._run(&arng)
+extension GenProtocol {
+    @inlinable
+    public func run() -> Value {
+        var srng = SystemRandomNumberGenerator()
+        return self.run(using: &srng)
     }
-    var arng = AnyRandomNumberGenerator(rng)
-    defer { rng = arng._rng as! G }
-    return self._run(&arng)
-  }
-
-  /// Returns a random value.
-  ///
-  /// - Returns: A random value.
-  @inlinable
-  public func run() -> Value {
-    var rng = SystemRandomNumberGenerator()
-    return self.run(using: &rng)
-  }
 }
 
-extension Gen {
-  /// Produces a generator that always returns the same, constant value.
-  ///
-  /// - Parameter value: A constant value.
-  /// - Returns: A generator of a constant value.
-  @inlinable
-  public static func always(_ value: Value) -> Gen {
-    return Gen { _ in value }
-  }
+/// Produces a generator that always returns the same, constant value.
+///
+/// - Parameter value: A constant value.
+/// - Returns: A generator of a constant value.
+public struct Always<Value>: GenProtocol {
+    public let value: Value
 
-  /// Transforms a generator of `Value`s into a generator of `NewValue`s by applying a transformation.
-  ///
-  /// - Parameter transform: A function that transforms `Value`s into `NewValue`s.
-  /// - Returns: A generator of `NewValue`s.
-  @inlinable
-  public func map<NewValue>(_ transform: @escaping (Value) -> NewValue) -> Gen<NewValue> {
-    return Gen<NewValue> { rng in transform(self._run(&rng)) }
-  }
+    @inlinable
+    public init(_ value: Value) {
+        self.value = value
+    }
+
+    @inlinable
+    public func run<RNG>(using rng: inout RNG) -> Value where RNG : RandomNumberGenerator {
+        value
+    }
 }
+
+public enum Gens {}
+
+extension Gens {
+    public struct Map<Upstream: GenProtocol, Value>: GenProtocol {
+        public let upstream: Upstream
+        public let transform: @Sendable (Upstream.Value) -> Value
+
+        @inlinable
+        init(upstream: Upstream, transform: @escaping @Sendable (Upstream.Value) -> Value) {
+            self.upstream = upstream
+            self.transform = transform
+        }
+
+        @inlinable
+        public func run<RNG>(using rng: inout RNG) -> Value where RNG : RandomNumberGenerator {
+            transform(upstream.run(using: &rng))
+        }
+    }
+}
+
+extension Gens.Map: Sendable where Upstream: Sendable {}
+
+extension GenProtocol {
+    /// Transforms a generator of `Value`s into a generator of `NewValue`s by applying a transformation.
+    ///
+    /// - Parameter transform: A function that transforms `Value`s into `NewValue`s.
+    /// - Returns: A generator of `NewValue`s.
+    @inlinable
+    public func map<NewValue>(
+        _ transform: @escaping @Sendable (Value) -> NewValue
+    ) -> Gens.Map<Self, NewValue> {
+        .init(upstream: self, transform: transform)
+    }
+}
+
+extension Gens {
+    public struct Zip2<A: GenProtocol, B: GenProtocol>: GenProtocol {
+        public let a: A
+        public let b: B
+
+        @inlinable internal init(a: A, b: B) {
+            self.a = a
+            self.b = b
+        }
+
+        @inlinable
+        public func run<RNG>(using rng: inout RNG) -> (A.Value, B.Value) where RNG : RandomNumberGenerator {
+            (a.run(using: &rng), b.run(using: &rng))
+        }
+    }
+}
+
+extension Gens.Zip2: Sendable where A: Sendable, B: Sendable {}
 
 /// Combines two generators into a single one.
 ///
@@ -60,500 +91,577 @@ extension Gen {
 ///   - b: A generator of `B`s.
 /// - Returns: A generator of `(A, B)` pairs.
 @inlinable
-public func zip<A, B>(_ a: Gen<A>, _ b: Gen<B>) -> Gen<(A, B)> {
-  return Gen<(A, B)> { rng in
-    (a._run(&rng), b._run(&rng))
-  }
+public func zip<A: GenProtocol, B: GenProtocol>(_ a: A, _ b: B) -> Gens.Zip2<A, B> {
+    .init(a: a, b: b)
 }
 
-extension Gen {
-  /// Transforms a generator of `Value`s into a generator of `NewValue`s by transforming a value into a generator of `NewValue`s.
-  ///
-  /// - Parameter transform: A function that transforms `Value`s into a generator of `NewValue`s.
-  /// - Returns: A generator of `NewValue`s.
-  @inlinable
-  public func flatMap<NewValue>(_ transform: @escaping (Value) -> Gen<NewValue>) -> Gen<NewValue> {
-    return Gen<NewValue> { rng in
-      transform(self._run(&rng))._run(&rng)
-    }
-  }
-
-  /// Returns a generator of the non-nil results of calling the given transformation with a value of the generator.
-  ///
-  /// - Parameter transform: A closure that accepts an element of this sequence as its argument and returns an optional value.
-  /// - Returns: A generator of the non-nil results of calling the given transformation with a value of the generator.
-  @inlinable
-  public func compactMap<NewValue>(_ transform: @escaping (Value) -> NewValue?) -> Gen<NewValue> {
-    return Gen<NewValue> { rng in
-      while true {
-        if let value = transform(self._run(&rng)) {
-          return value
+extension Gens {
+    public struct FlatMap<Upstream: GenProtocol, NewValue: GenProtocol>: GenProtocol {
+        @inlinable internal init(
+            upstream: Upstream,
+            transform: @escaping @Sendable (Upstream.Value) -> NewValue
+        ) {
+            self.upstream = upstream
+            self.transform = transform
         }
-      }
+
+        public let upstream: Upstream
+        public let transform: @Sendable (Upstream.Value) -> NewValue
+
+        @inlinable
+        public func run<RNG>(using rng: inout RNG) -> NewValue.Value where RNG : RandomNumberGenerator {
+            transform(upstream.run(using: &rng)).run(using: &rng)
+        }
     }
-  }
+}
 
-  /// Produces a generator of values that match the predicate.
-  ///
-  /// - Parameter predicate: A predicate.
-  /// - Returns: A generator of values that match the predicate.
-  @inlinable
-  public func filter(_ predicate: @escaping (Value) -> Bool) -> Gen<Value> {
-    return self.compactMap { predicate($0) ? $0 : nil }
-  }
+extension Gens.FlatMap: Sendable where Upstream: Sendable {}
 
-  /// Uses a weighted distribution to randomly select one of the generators in the list.
-  @inlinable
-  public static func frequency(_ distribution: (Int, Gen)...) -> Gen {
-    return frequency(distribution)
-  }
-
-  /// Uses a weighted distribution to randomly select one of the generators in the list.
-  @inlinable
-  public static func frequency(_ distribution: [(Int, Gen)]) -> Gen {
-    // TODO: Add `!distribution.isEmpty` precondition?
-    let generators = distribution.flatMap { Array(repeating: $1, count: $0) }
-    return Gen { rng in
-      Gen<Int>.int(in: 0...generators.count - 1)
-        .flatMap { idx in generators[idx] }
-        .run(using: &rng)
+extension GenProtocol {
+    /// Transforms a generator of `Value`s into a generator of `NewValue`s by transforming a value into a generator of `NewValue`s.
+    ///
+    /// - Parameter transform: A function that transforms `Value`s into a generator of `NewValue`s.
+    /// - Returns: A generator of `NewValue`s.
+    @inlinable public func flatMap<NewGen: GenProtocol>(
+        _ transform: @escaping @Sendable (Value) -> NewGen
+    ) -> Gens.FlatMap<Self, NewGen> {
+        .init(upstream: self, transform: transform)
     }
-  }
 }
 
-extension Gen where Value: FixedWidthInteger {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func int(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in Value.random(in: range, using: &rng) }
-  }
+extension Gens {
+    public struct Compact<Upstream: GenProtocol, Value>: GenProtocol
+    where Upstream.Value == Value? {
+        @inlinable internal init(upstream: Upstream) {
+            self.upstream = upstream
+        }
+
+        public let upstream: Upstream
+
+        @inlinable public func run<RNG>(using rng: inout RNG) -> Value where RNG : RandomNumberGenerator {
+            while true {
+                if let value = upstream.run(using: &rng) {
+                    return value
+                }
+            }
+        }
+    }
 }
 
-extension Gen where Value: BinaryFloatingPoint, Value.RawSignificand: FixedWidthInteger {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func float(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in Value.random(in: range, using: &rng) }
-  }
+extension Gens.Compact: Sendable where Upstream: Sendable {}
+
+extension GenProtocol {
+    /// Returns a generator of the non-nil results of the given generator.
+    @inlinable public func compact<Wrapped>() -> Gens.Compact<Self, Wrapped> where Value == Wrapped? {
+        .init(upstream: self)
+    }
+
+    /// Returns a generator of the non-nil results of calling the given transformation with a value of the generator.
+    ///
+    /// - Parameter transform: A closure that accepts an element of this sequence as its argument and returns an optional value.
+    /// - Returns: A generator of the non-nil results of calling the given transformation with a value of the generator.
+    @inlinable public func compactMap<NewValue>(
+        _ transform: @escaping @Sendable (Value) -> NewValue?
+    ) -> Gens.Compact<Gens.Map<Self, NewValue?>, NewValue> {
+        self.map(transform).compact()
+    }
 }
 
-extension Gen where Value == Int {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func int(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in .random(in: range, using: &rng) }
-  }
+extension Gens {
+    public struct Filter<Upstream: GenProtocol>: GenProtocol {
+        @inlinable internal init(
+            upstream: Upstream,
+            predicate: @escaping @Sendable (Upstream.Value) -> Bool
+        ) {
+            self.upstream = upstream
+            self.predicate = predicate
+        }
+
+        public let upstream: Upstream
+        public let predicate: @Sendable (Upstream.Value) -> Bool
+
+        @inlinable public func run<RNG>(using rng: inout RNG) -> Upstream.Value where RNG : RandomNumberGenerator {
+            while true {
+                let value = upstream.run(using: &rng)
+                if predicate(value) {
+                    return value
+                }
+            }
+        }
+    }
 }
 
-extension Gen where Value == Int8 {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func int8(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in .random(in: range, using: &rng) }
-  }
+extension Gens.Filter: Sendable where Upstream: Sendable {}
+
+extension GenProtocol {
+    /// Produces a generator of values that match the predicate.
+    ///
+    /// - Parameter predicate: A predicate.
+    /// - Returns: A generator of values that match the predicate.
+    @inlinable
+    public func filter(_ predicate: @escaping @Sendable (Value) -> Bool) -> Gens.Filter<Self> {
+        .init(upstream: self, predicate: predicate)
+    }
 }
 
-extension Gen where Value == Int16 {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func int16(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in .random(in: range, using: &rng) }
-  }
+/// Uses a weighted distribution to randomly select one of the generators in the list.
+public struct Frequency<Upstream: GenProtocol>: GenProtocol {
+    public let generators: [Upstream]
+
+    /// Uses a weighted distribution to randomly select one of the generators in the list.
+    @inlinable
+    public init?(_ distribution: some Sequence<(Int, Upstream)>) {
+        self.generators = distribution.flatMap { repeatElement($1, count: $0) }
+        guard !generators.isEmpty else { return nil }
+    }
+
+    /// Uses a weighted distribution to randomly select one of the generators in the list.
+    @inlinable
+    public init?(_ distribution: (Int, Upstream)...) {
+        self.init(distribution)
+    }
+
+    @inlinable
+    public func run<RNG>(using rng: inout RNG) -> Upstream.Value where RNG : RandomNumberGenerator {
+        generators.randomElement(using: &rng)!.run(using: &rng)
+    }
 }
 
-extension Gen where Value == Int32 {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func int32(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in .random(in: range, using: &rng) }
-  }
-}
-
-extension Gen where Value == Int64 {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func int64(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in .random(in: range, using: &rng) }
-  }
-}
-
-extension Gen where Value == UInt {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func uint(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in .random(in: range, using: &rng) }
-  }
-}
-
-extension Gen where Value == UInt8 {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func uint8(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in .random(in: range, using: &rng) }
-  }
-}
-
-extension Gen where Value == UInt16 {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func uint16(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in .random(in: range, using: &rng) }
-  }
-}
-
-extension Gen where Value == UInt32 {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func uint32(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in .random(in: range, using: &rng) }
-  }
-}
-
-extension Gen where Value == UInt64 {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func uint64(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in .random(in: range, using: &rng) }
-  }
-}
-
-extension Gen where Value == Double {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func double(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in .random(in: range, using: &rng) }
-  }
-}
-
-extension Gen where Value == Float {
-  /// Returns a generator of random values within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random value. `range` must be finite.
-  /// - Returns: A generator of random values within the bounds of range.
-  @inlinable
-  public static func float32(in range: ClosedRange<Value>) -> Gen {
-    return Gen { rng in .random(in: range, using: &rng) }
-  }
-}
-
-#if !(os(Windows) || os(Android)) && (arch(i386) || arch(x86_64))
-  extension Gen where Value == Float80 {
+extension FixedWidthInteger {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func float80(in range: ClosedRange<Value>) -> Gen {
-      return Gen { rng in .random(in: range, using: &rng) }
+    public static func generator(in range: ClosedRange<Self>) -> Gens.Integer<Self> {
+        .init(range: range)
     }
-  }
-#endif
+}
 
-#if canImport(CoreGraphics)
-  import CoreGraphics
-
-  extension Gen where Value == CGFloat {
+extension BinaryFloatingPoint where RawSignificand: FixedWidthInteger {
     /// Returns a generator of random values within the specified range.
     ///
     /// - Parameter range: The range in which to create a random value. `range` must be finite.
     /// - Returns: A generator of random values within the bounds of range.
     @inlinable
-    public static func cgFloat(in range: ClosedRange<Value>) -> Gen {
-      return Gen { rng in .random(in: range, using: &rng) }
+    public static func generator(in range: ClosedRange<Self>) -> Gens.Float<Self> {
+        .init(range: range)
     }
-  }
-#endif
-
-extension Gen where Value == Bool {
-  /// A generator of random boolean values.
-  public static let bool = Gen { rng in Bool.random(using: &rng) }
 }
 
-extension Gen {
-  /// Produces a generator of random elements of this generator's collection.
-  ///
-  /// - Parameter collection: A collection.
-  @inlinable
-  public static func element<C>(of collection: C) -> Gen where C: Collection, Value == C.Element? {
-    return Gen { rng in collection.randomElement(using: &rng) }
-  }
-
-  /// Produces a generator of shuffled arrays of this generator's collection.
-  ///
-  /// - Parameter collection: A collection.
-  @inlinable
-  public static func shuffled<C>(_ collection: C) -> Gen where C: Collection, Value == [C.Element] {
-    return Gen { rng in collection.shuffled(using: &rng) }
-  }
-}
-
-extension Gen where Value: Collection {
-  /// Produces a generator of random elements of this generator's collection.
-  @inlinable
-  public var element: Gen<Value.Element?> {
-    return self.flatMap(Gen<Value.Element?>.element)
-  }
-
-  /// Produces a generator of shuffled arrays of this generator's collection.
-  @inlinable
-  public var shuffled: Gen<[Value.Element]> {
-    return self.flatMap(Gen<[Value.Element]>.shuffled)
-  }
-}
-
-extension Gen where Value: CaseIterable {
-  /// Produces a generator of all case-iterable cases.
-  @inlinable
-  public static var allCases: Gen<Value> {
-    return Gen<Value.AllCases>.always(Value.allCases).element.map { $0! }
-  }
-}
-
-extension Gen {
-  /// Produces a new generator of collections of this generator's values.
-  ///
-  /// - Parameter count: The size of the random collection.
-  /// - Returns: A generator of collections.
-  @inlinable
-  public func collection<C>(of count: Gen<Int>) -> Gen<C>
-  where C: RangeReplaceableCollection, C.Element == Value {
-    return count.flatMap { count in
-      guard count > 0 else { return .always(C()) }
-      return Gen<C> { rng in
-        var collection = C()
-        guard count > 0 else { return collection }
-        collection.reserveCapacity(count)
-        for _ in 1...count {
-          collection.append(self._run(&rng))
+extension Gens {
+    public struct Integer<Value: FixedWidthInteger>: GenProtocol {
+        @inlinable
+        internal init(range: ClosedRange<Value>) {
+            self.range = range
         }
-        return collection
-      }
-    }
-  }
 
-  /// Produces a new generator of arrays of this generator's values.
-  ///
-  /// - Parameter count: The size of the random array.
-  /// - Returns: A generator of arrays.
-  @inlinable
-  public func array(of count: Gen<Int>) -> Gen<[Value]> {
-    return count.flatMap { count in
-      guard count > 0 else { return .always([]) }
-      return Gen<[Value]> { rng in
-        var array: [Value] = []
-        array.reserveCapacity(count)
-        for _ in 0..<count {
-          array.append(self._run(&rng))
+        public let range: ClosedRange<Value>
+
+        @inlinable
+        public func run<RNG>(using rng: inout RNG) -> Value where RNG : RandomNumberGenerator {
+            Value.random(in: range, using: &rng)
         }
-        return array
-      }
     }
-  }
 
-  /// Produces a new generator of dictionaries of this generator's pairs.
-  ///
-  /// - Parameter count: The size of the random dictionary.
-  /// - Returns: A generator of dictionaries.
-  @inlinable
-  public func dictionary<K, V>(ofAtMost count: Gen<Int>) -> Gen<[K: V]> where Value == (K, V) {
-    return count.flatMap { count in
-      guard count > 0 else { return .always([:]) }
-      return Gen<[K: V]> { rng in
-        var dictionary: [K: V] = [:]
-        dictionary.reserveCapacity(count)
-        for _ in 1...count {
-          let (k, v) = self._run(&rng)
-          dictionary[k] = v
+    public struct Float<Value: BinaryFloatingPoint>: GenProtocol
+    where Value.RawSignificand: FixedWidthInteger {
+        @inlinable internal init(range: ClosedRange<Value>) {
+            self.range = range
         }
-        return dictionary
-      }
-    }
-  }
 
-  /// Produces a new generator of sets of this generator's values.
-  ///
-  /// - Parameter count: The size of the random set.
-  /// - Returns: A generator of sets.
-  @inlinable
-  public func set<S>(ofAtMost count: Gen<Int>) -> Gen<S> where S: SetAlgebra, S.Element == Value {
-    return count.flatMap { count in
-      guard count > 0 else { return .always(S()) }
-      return Gen<S> { rng in
-        var set = S()
-        for _ in 1...count {
-          set.insert(self._run(&rng))
+        public let range: ClosedRange<Value>
+
+        @inlinable
+        public func run<RNG>(using rng: inout RNG) -> Value where RNG : RandomNumberGenerator {
+            Value.random(in: range, using: &rng)
         }
-        return set
-      }
     }
-  }
-
-  /// Produces a new generator of optional values.
-  ///
-  /// - Returns: A generator of optional values.
-  @inlinable
-  public var optional: Gen<Value?> {
-    return Gen<Value?>.frequency(
-      (1, Gen<Value?>.always(Value?.none)),
-      (3, self.map(Value?.some))  // TODO: Change to use `size` with resizable generators?
-    )
-  }
-
-  /// Produces a new generator of failable values.
-  ///
-  /// - Returns: A generator of failable values.
-  @inlinable
-  public func asResult<Failure>(withFailure gen: Gen<Failure>) -> Gen<Result<Value, Failure>> {
-    return Gen<Result<Value, Failure>>.frequency(
-      (1, gen.map(Result.failure)),
-      (3, self.map(Result.success))  // TODO: Change to use `size` with resizable generators?
-    )
-  }
 }
 
-extension Gen where Value: Hashable {
-  /// Produces a new generator of sets of this generator's values.
-  ///
-  /// - Parameter count: The size of the random set.
-  /// - Returns: A generator of sets.
-  @inlinable
-  public func set(ofAtMost count: Gen<Int>) -> Gen<Set<Value>> {
-    return count.flatMap { count in
-      guard count > 0 else { return .always([]) }
-      return Gen<Set<Value>> { rng in
-        var set: Set<Value> = []
-        for _ in 1...count {
-          set.insert(self._run(&rng))
+extension Gens.Integer: Sendable where Value: Sendable {}
+extension Gens.Float: Sendable where Value: Sendable {}
+
+extension Bool {
+    public struct Generator: GenProtocol, Sendable {
+        @inlinable
+        public init() {}
+
+        @inlinable
+        public func run<RNG>(using rng: inout RNG) -> Bool where RNG : RandomNumberGenerator {
+            Bool.random(using: &rng)
         }
-        return set
-      }
     }
-  }
 }
 
-extension Gen where Value == UnicodeScalar {
-  /// Returns a generator of random unicode scalars within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random unicode scalar. `range` must be finite.
-  /// - Returns: A generator of random unicode scalars within the bounds of range.
-  @inlinable
-  public static func unicodeScalar(in range: ClosedRange<Value>) -> Gen {
-    return Gen<UInt32>
-      .int(in: range.lowerBound.value...range.upperBound.value)
-      .map { UnicodeScalar($0)! }
-  }
-}
+public struct ElementOf<C: Collection>: GenProtocol {
+    public let collection: C
 
-extension Gen where Value == Character {
-  // FIXME: Make safe for characters with multiple scalars.
-  /// Returns a generator of random characters within the specified range.
-  ///
-  /// - Parameter range: The range in which to create a random character. `range` must be finite.
-  /// - Returns: A generator of random characters within the bounds of range.
-  @inlinable
-  public static func character(in range: ClosedRange<Value>) -> Gen {
-    return Gen<UnicodeScalar>
-      .unicodeScalar(
-        in: range.lowerBound.unicodeScalars.first!...range.upperBound.unicodeScalars.last!
-      )
-      .map(Character.init)
-  }
-
-  /// A generator of random numeric digits.
-  public static let number = Gen.character(in: "0"..."9")
-
-  /// A generator of uppercase letters.
-  public static let uppercaseLetter = Gen.character(in: "A"..."Z")
-
-  /// A generator of lowercase letters.
-  public static let lowercaseLetter = Gen.character(in: "a"..."z")
-
-  /// A generator of uppercase and lowercase letters.
-  public static let letter = Gen<Character?>
-    .element(of: Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") as [Character])
-    .map { $0! }
-
-  /// A generator of letters and numbers.
-  public static let letterOrNumber = Gen<Character?>
-    .element(
-      of: Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") as [Character]
-    )
-    .map { $0! }
-
-  /// A generator of ASCII characters.
-  public static let ascii = Gen<UInt32>.int(in: 0...127)
-    .map { UnicodeScalar($0)! }
-
-  /// A generator of Latin-1 characters.
-  public static let latin1 = Gen<UInt32>.int(in: 0...255)
-    .map { UnicodeScalar($0)! }
-
-  /// Produces a new generator of strings of this generator's characters.
-  ///
-  /// - Parameter count: The size of the random string.
-  /// - Returns: A generator of strings.
-  @inlinable
-  public func string(of count: Gen<Int>) -> Gen<String> {
-    return self.map(String.init).array(of: count).map { $0.joined() }
-  }
-}
-
-extension Sequence {
-  /// Transforms each value of an array of generators before rewrapping the array in an array generator.
-  ///
-  /// - Parameter transform: A transform function to apply to the value of each generator.
-  /// - Returns: A generator of arrays.
-  @inlinable
-  public func traverse<A, B>(_ transform: @escaping (A) -> B) -> Gen<[B]> where Element == Gen<A> {
-    return Gen<[B]> { rng in
-      self.map { transform($0.run(using: &rng)) }
+    @inlinable
+    public init(_ collection: C) {
+        self.collection = collection
     }
-  }
 
-  /// Transforms an array of generators into a generator of arrays.
-  ///
-  /// - Returns: A generator of arrays.
-  @inlinable
-  public func sequence<A>() -> Gen<[A]> where Element == Gen<A> {
-    return self.traverse { $0 }
-  }
+    @inlinable
+    public func run<RNG>(using rng: inout RNG) -> C.Element? where RNG : RandomNumberGenerator {
+        collection.randomElement(using: &rng)
+    }
+}
+
+extension ElementOf: Sendable where C: Sendable {}
+
+public struct Shuffled<C: Collection>: GenProtocol {
+    public let collection: C
+
+    @inlinable
+    public init(_ collection: C) {
+        self.collection = collection
+    }
+
+    @inlinable
+    public func run<RNG>(using rng: inout RNG) -> [C.Element] where RNG : RandomNumberGenerator {
+        collection.shuffled(using: &rng)
+    }
+}
+
+extension Shuffled: Sendable where C: Sendable {}
+
+extension GenProtocol where Value: Collection {
+    public var element: Gens.FlatMap<Self, ElementOf<Value>> {
+        self.flatMap { ElementOf($0) }
+    }
+
+    public var shuffled: Gens.FlatMap<Self, Shuffled<Self.Value>> {
+        self.flatMap { Shuffled($0) }
+    }
+}
+
+extension CaseIterable {
+    @inlinable public func generator() -> Gens.Compact<ElementOf<AllCases>, Self> {
+        ElementOf(Self.allCases).compact()
+    }
+}
+
+extension RangeReplaceableCollection {
+    @inlinable
+    init(reservingCapacity capacity: Int) {
+        self.init()
+        reserveCapacity(capacity)
+    }
+}
+
+extension Gens {
+    public struct Reduce<
+        Upstream: GenProtocol,
+        InitialValue: GenProtocol,
+        Count: GenProtocol
+    >: GenProtocol where Count.Value: FixedWidthInteger {
+        @inlinable
+        internal init(
+            upstream: Upstream,
+            count: Count,
+            initialValue: @escaping @Sendable (Count.Value) -> InitialValue,
+            accumulate: @escaping @Sendable (inout InitialValue.Value, Upstream.Value) -> Void
+        ) {
+            self.upstream = upstream
+            self.count = count
+            self.initialValue = initialValue
+            self.accumulate = accumulate
+        }
+
+        public typealias Value = InitialValue.Value
+
+        public let upstream: Upstream
+        public let count: Count
+        public let initialValue: @Sendable (Count.Value) -> InitialValue
+        public let accumulate: @Sendable (inout InitialValue.Value, Upstream.Value) -> Void
+
+        @inlinable public func run<RNG>(using rng: inout RNG) -> Value where RNG : RandomNumberGenerator {
+            let actualCount = self.count.run(using: &rng)
+            var output = initialValue(actualCount).run(using: &rng)
+            for _ in 1...actualCount {
+                accumulate(&output, upstream.run(using: &rng))
+            }
+            return output
+        }
+    }
+}
+
+extension Gens.Reduce: Sendable where Upstream: Sendable, InitialValue: Sendable, Count: Sendable {}
+
+extension Gens {
+    public struct EitherGenerator<
+        A: GenProtocol,
+        B: GenProtocol,
+        ACount: GenProtocol<Int>,
+        BCount: GenProtocol<Int>
+    >: GenProtocol {
+        @inlinable internal init(aCount: ACount, bCount: BCount, a: A, b: B) {
+            self.aCount = aCount
+            self.bCount = bCount
+            self.a = a
+            self.b = b
+        }
+
+        public let aCount: ACount
+        public let bCount: BCount
+        public let a: A
+        public let b: B
+
+        @inlinable
+        public func run<RNG>(using rng: inout RNG) -> Either<A.Value, B.Value> where RNG : RandomNumberGenerator {
+            let actualADist = aCount.run(using: &rng)
+            let actualBDist = bCount.run(using: &rng)
+            let distTotal = actualADist + actualBDist
+            let aRange = 0..<actualADist
+            let bRange = actualADist..<distTotal
+            let index = Int.random(in: 0..<distTotal, using: &rng)
+            switch index {
+            case aRange:
+                return .left(a.run(using: &rng))
+            case bRange:
+                return .right(b.run(using: &rng))
+            default:
+                preconditionFailure()
+            }
+        }
+    }
+}
+
+extension Gens.EitherGenerator: Sendable
+where ACount: Sendable, BCount: Sendable, A: Sendable, B: Sendable {}
+
+extension Either {
+    @inlinable
+    public static func generator<
+        LeftGen: GenProtocol<Left>,
+        RightGen: GenProtocol<Right>,
+        LeftCount: GenProtocol<Int>,
+        RightCount: GenProtocol<Int>
+    >(
+        left: LeftGen,
+        right: RightGen,
+        leftDistribution: LeftCount = Always(2),
+        rightDistribution: RightCount = Always(2)
+    ) -> Gens.EitherGenerator<LeftGen, RightGen, LeftCount, RightCount> {
+        .init(aCount: leftDistribution, bCount: rightDistribution, a: left, b: right)
+    }
+}
+
+extension GenProtocol {
+    @inlinable
+    public func reduce<Count: GenProtocol, InitialValue: GenProtocol>(
+        count: Count,
+        into initialValue: @escaping @Sendable (Count.Value) -> InitialValue,
+        _ accumulate: @escaping @Sendable (inout InitialValue.Value, Value) -> Void
+    ) -> Gens.Reduce<Self, InitialValue, Count> {
+        .init(upstream: self, count: count, initialValue: initialValue, accumulate: accumulate)
+    }
+
+    @inlinable
+    public func reduce<Count: GenProtocol, NewValue>(
+        count: Count,
+        into initialValue: @escaping @Sendable (Count.Value) -> NewValue,
+        _ accumulate: @escaping @Sendable (inout NewValue, Value) -> Void
+    ) -> Gens.Reduce<Self, Always<NewValue>, Count> {
+        .init(
+            upstream: self,
+            count: count,
+            initialValue: { Always(initialValue($0)) },
+            accumulate: accumulate
+        )
+    }
+
+    @inlinable
+    public func reduce<Count: GenProtocol, InitialValue: GenProtocol>(
+        count: Count,
+        into initialValue: @escaping @Sendable @autoclosure () -> InitialValue,
+        _ accumulate: @escaping @Sendable (inout InitialValue.Value, Value) -> Void
+    ) -> Gens.Reduce<Self, InitialValue, Count> {
+        .init(upstream: self, count: count, initialValue: { _ in initialValue() }, accumulate: accumulate)
+    }
+
+    @inlinable
+    public func reduce<Count: GenProtocol, InitialValue>(
+        count: Count,
+        into initialValue: @escaping @Sendable @autoclosure () -> InitialValue,
+        _ accumulate: @escaping @Sendable (inout InitialValue, Value) -> Void
+    ) -> Gens.Reduce<Self, Always<InitialValue>, Count> {
+        .init(upstream: self, count: count, initialValue: { _ in Always(initialValue()) }, accumulate: accumulate)
+    }
+
+    @inlinable
+    public func array<Count: GenProtocol<Int>>(
+        of count: Count
+    ) -> Gens.Reduce<Self, Always<[Self.Value]>, Count> {
+       self.reduce(count: count, into: { Array(reservingCapacity: $0) }) { output, item in
+            output.append(item)
+        }
+    }
+
+    @inlinable
+    public func dictionary<K: Hashable, V, Count: GenProtocol<Int>>(
+        ofAtMost count: Count
+    ) -> Gens.Reduce<Self, Always<Dictionary<K, V>>, Count>
+    where Value == (key: K, value: V) {
+        self.reduce(count: count, into: {
+            var d = Dictionary<K, V>()
+            d.reserveCapacity($0)
+            return d
+        }) { output, pair in
+            output[pair.key] = pair.value
+        }
+    }
+
+    /// Produces a new generator of optional values.
+    ///
+    /// - Returns: A generator of optional values.
+    @inlinable
+    public func `optional`<Some: GenProtocol<Int>, None: GenProtocol<Int>>(
+        some someDistribution: Some = Always(3),
+        none noneDistribution: None = Always(1)
+    ) -> Gens.Map<Gens.EitherGenerator<Self, Always<()>, Some, None>, Self.Value?> {
+        Gens.EitherGenerator(
+            aCount: someDistribution,
+            bCount: noneDistribution,
+            a: self,
+            b: Always(())
+        ).map {
+            switch $0 {
+            case .left(let value): return Value?.some(value)
+            case .right: return nil
+            }
+        }
+    }
+
+    /// Produces a new generator of failable values.
+    ///
+    /// - Returns: A generator of failable values.
+    @inlinable
+    public func asResult<
+        Failure: GenProtocol,
+        SuccessCount: GenProtocol<Int>,
+        FailureCount: GenProtocol<Int>
+    >(
+        withFailure failure: Failure,
+        successDistribution: SuccessCount = Always(3),
+        failureDistribution: FailureCount = Always(1)
+    ) -> Gens.Map<
+        Gens.EitherGenerator<Self, Failure, SuccessCount, FailureCount>,
+        Result<Self.Value, Failure.Value>
+    > {
+        Gens.EitherGenerator(
+            aCount: successDistribution,
+            bCount: failureDistribution,
+            a: self,
+            b: failure
+        ).map(\.asResult)
+    }
+}
+
+extension UnicodeScalar {
+    @inlinable
+    public static func generator(
+        inNumericRange range: ClosedRange<UInt32>
+    ) -> Gens.Compact<Gens.Map<Gens.Integer<UInt32>, UnicodeScalar?>, UnicodeScalar> {
+        UInt32.generator(in: range)
+            .compactMap { UnicodeScalar($0) }
+    }
+
+    @inlinable
+    public static func generator(
+        in range: ClosedRange<UnicodeScalar>
+    ) -> Gens.Compact<Gens.Map<Gens.Integer<UInt32>, UnicodeScalar?>, UnicodeScalar> {
+        UnicodeScalar.generator(inNumericRange: range.lowerBound.value...range.upperBound.value)
+    }
+}
+
+extension Character {
+    @inlinable
+    public static func generator(
+        in range: ClosedRange<Character>
+    ) -> Gens.Map<
+        Gens.Compact<Gens.Map<Gens.Integer<UInt32>, UnicodeScalar?>, UnicodeScalar>,
+        Character
+    > {
+        UnicodeScalar.generator(
+            in: range.lowerBound.unicodeScalars.first!...range.upperBound.unicodeScalars.last!
+        )
+        .map { Character($0) }
+    }
+
+    public static func generator(
+        in string: String
+    ) -> Gens.Compact<ElementOf<[Character]>, Character> {
+        ElementOf([Character](string)).compact()
+    }
+}
+
+private extension String {
+    static let _numbers = "0123456789"
+    static let _lowerLetters = "abcdefghijklmnopqrstuvwxyz"
+    static let _upperLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+}
+
+extension Gens {
+    public static let number = Character.generator(in: ._numbers)
+    public static let uppercaseLetter = Character.generator(in: ._upperLetters)
+    public static let lowercaseLetter = Character.generator(in: ._lowerLetters)
+    public static let letter = Character.generator(in: ._upperLetters + ._lowerLetters)
+    public static let letterOrNumber = Character
+        .generator(in: ._lowerLetters + ._upperLetters + ._numbers)
+
+    public static let ascii = UnicodeScalar.generator(inNumericRange: 0...127)
+    public static let latin1 = UnicodeScalar.generator(inNumericRange: 0...255)
+}
+
+extension GenProtocol where Value == Character {
+    @inlinable
+    public func string<Count: GenProtocol<Int>>(
+        of count: Count
+    ) -> Gens.Reduce<Self, Always<String>, Count> {
+        self.reduce(count: count, into: { String(reservingCapacity: $0) }) { $0.append($1) }
+    }
+}
+
+extension Gens {
+    public struct Traverse<Input: Sequence, NewElement>: GenProtocol
+    where Input.Element: GenProtocol {
+        public let input: Input
+        public let transform: @Sendable (Input.Element.Value) -> NewElement
+
+        @inlinable
+        init(input: Input, transform: @escaping @Sendable (Input.Element.Value) -> NewElement) {
+            self.input = input
+            self.transform = transform
+        }
+
+        @inlinable
+        public func run<RNG>(using rng: inout RNG) -> [NewElement] where RNG : RandomNumberGenerator {
+            input.map { transform($0.run(using: &rng)) }
+        }
+    }
+}
+
+extension Gens.Traverse: Sendable where Input: Sendable {}
+
+extension Sequence where Element: GenProtocol {
+    /// Transforms each value of an array of generators before rewrapping the array in an array generator.
+    ///
+    /// - Parameter transform: A transform function to apply to the value of each generator.
+    /// - Returns: A generator of arrays.
+    @inlinable
+    public func traverse<NewElement>(
+        _ transform: @escaping @Sendable (Element.Value) -> NewElement
+    ) -> Gens.Traverse<Self, NewElement> {
+        .init(input: self, transform: transform)
+    }
+
+    /// Transforms an array of generators into a generator of arrays.
+    ///
+    /// - Returns: A generator of arrays.
+    @inlinable
+    public func arrayGenerator() -> Gens.Traverse<Self, Element.Value> {
+        self.traverse { $0 }
+    }
 }
