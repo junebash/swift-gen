@@ -1,8 +1,9 @@
 import Gen
 
 zip(.bool, .bool).dictionary(ofAtMost: .always(1)).run()
-Gen.bool.set(ofAtMost: .always(3)).run()
-Gen.float(in: 0...1)
+zip(Bool.Generator(), Bool.Generator()).dictionary(ofAtMost: Always(1)).run()
+Bool.Generator().set(ofAtMost: Always(3)).run()
+Float.generator(in: 0...1)
 
 import CoreGraphics
-Gen.cgFloat(in: 0...1)
+CGFloat.generator(in: 0...1)

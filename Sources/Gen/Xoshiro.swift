@@ -61,7 +61,7 @@ public struct Xoshiro: RandomNumberGenerator, Sendable {
   @inlinable
   public init(seed: UInt64) {
     self.state = State(seed: seed)
-    for _ in 1...10 { _ = self.next() }  // perturb
+    for _ in 1...10 { state.perturb() }
   }
 
   @inlinable
@@ -77,6 +77,7 @@ public struct Xoshiro: RandomNumberGenerator, Sendable {
         byteSeed.removeFirst(newBytes.count)
       }
     }
+    for _ in 1...10 { state.perturb() }
   }
 
   @inlinable

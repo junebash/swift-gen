@@ -1,24 +1,4 @@
-/// A composable, transformable context for generating random values.
-public struct AnyGen<Value>: Gen {
-    @usableFromInline
-    internal var _run: (inout any RandomNumberGenerator) -> Value
 
-    @inlinable
-    public init(run: @escaping (inout any RandomNumberGenerator) -> Value) {
-        self._run = run
-    }
-
-    /// Returns a random value.
-    ///
-    /// - Parameter rng: A random number generator.
-    /// - Returns: A random value.
-    @inlinable
-    public func run<G: RandomNumberGenerator>(using rng: inout G) -> Value {
-        var anyRNG: any RandomNumberGenerator = rng
-        defer { rng = anyRNG as! G }
-        return self._run(&anyRNG)
-    }
-}
 
 extension AnyGen {
     /// Produces a generator that always returns the same, constant value.

@@ -101,7 +101,7 @@ final class GenTests: XCTestCase {
   }
 
   func testTraverse() {
-    let gen = [AnyGen.int(in: 1...100), AnyGen.int(in: 1_000...1_000_000)].traverse(String.init)
+    let gen = [AnyGen.int(in: 1...100), AnyGen.int(in: 1_000...1_000_000)].traverse { String($0) }
     XCTAssertEqual(["15", "18473"], gen.run(using: &xoshiro))
   }
 

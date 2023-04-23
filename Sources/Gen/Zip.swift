@@ -1,4 +1,20 @@
 extension Gens {
+  public struct Zip2<A: Gen, B: Gen>: Gen {
+    public let a: A
+    public let b: B
+
+    @inlinable internal init(a: A, b: B) {
+      self.a = a
+      self.b = b
+    }
+
+    @inlinable
+    public func run<RNG>(using rng: inout RNG) -> (A.Value, B.Value)
+    where RNG : RandomNumberGenerator {
+      (a.run(using: &rng), b.run(using: &rng))
+    }
+  }
+
   public struct Zip3<A, B, C>: Gen
   where A: Gen, B: Gen, C: Gen {
     @inlinable internal init(gens: (A, B, C)) {
@@ -68,7 +84,9 @@ extension Gens {
     public let gens: (A, B, C, D, E, F)
 
     @inlinable
-    public func run<RNG>(using rng: inout RNG) -> (A.Value, B.Value, C.Value, D.Value, E.Value, F.Value)
+    public func run<RNG>(
+      using rng: inout RNG
+    ) -> (A.Value, B.Value, C.Value, D.Value, E.Value, F.Value)
     where RNG : RandomNumberGenerator {
       (
         gens.0.run(using: &rng),
@@ -80,6 +98,28 @@ extension Gens {
       )
     }
   }
+}
+
+extension Gens.Zip2: Sendable where A: Sendable, B: Sendable {}
+extension Gens.Zip3: Sendable where A: Sendable, B: Sendable, C: Sendable {}
+extension Gens.Zip4: Sendable where A: Sendable, B: Sendable, C: Sendable, D: Sendable {}
+extension Gens.Zip5: Sendable
+where A: Sendable, B: Sendable, C: Sendable, D: Sendable, E: Sendable {}
+extension Gens.Zip6: Sendable
+where A: Sendable, B: Sendable, C: Sendable, D: Sendable, E: Sendable, F: Sendable {}
+
+/// Combines two generators into a single one.
+///
+/// - Parameters:
+///   - a: A generator of `A`s.
+///   - b: A generator of `B`s.
+/// - Returns: A generator of `(A, B)` pairs.
+@inlinable
+public func zip<A: Gen, B: Gen>(
+  _ a: A,
+  _ b: B
+) -> Gens.Zip2<A, B> {
+  .init(a: a, b: b)
 }
 
 public func zip<A, B, C>(
@@ -173,7 +213,10 @@ public func zip<A: Gen, B: Gen, C: Gen, D: Gen, E: Gen, F: Gen, G: Gen, H: Gen, 
   Gens.Zip2<Gens.Zip4<A, B, C, D>, Gens.Zip5<E, F, G, H, I>>,
   (A.Value, B.Value, C.Value, D.Value, E.Value, F.Value, G.Value, H.Value, I.Value)
 > {
-  Gens.Zip2(a: Gens.Zip4(gens: (a, b, c, d)), b: Gens.Zip5(gens: (e, f, g, h, i))).map { abcd, efghi in
+  Gens.Zip2(
+    a: Gens.Zip4(gens: (a, b, c, d)),
+    b: Gens.Zip5(gens: (e, f, g, h, i))
+  ).map { abcd, efghi in
     let (a, b, c, d) = abcd
     let (e, f, g, h, i) = efghi
     return (a, b, c, d, e, f, g, h, i)
@@ -195,7 +238,10 @@ public func zip<A: Gen, B: Gen, C: Gen, D: Gen, E: Gen, F: Gen, G: Gen, H: Gen, 
   Gens.Zip2<Gens.Zip4<A, B, C, D>, Gens.Zip6<E, F, G, H, I, J>>,
   (A.Value, B.Value, C.Value, D.Value, E.Value, F.Value, G.Value, H.Value, I.Value, J.Value)
 > {
-  Gens.Zip2(a: Gens.Zip4(gens: (a, b, c, d)), b: Gens.Zip6(gens: (e, f, g, h, i, j))).map { abcd, efghij in
+  Gens.Zip2(
+    a: Gens.Zip4(gens: (a, b, c, d)),
+    b: Gens.Zip6(gens: (e, f, g, h, i, j))
+  ).map { abcd, efghij in
     let (a, b, c, d) = abcd
     let (e, f, g, h, i, j) = efghij
     return (a, b, c, d, e, f, g, h, i, j)

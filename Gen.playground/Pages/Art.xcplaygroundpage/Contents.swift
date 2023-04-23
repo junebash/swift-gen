@@ -11,12 +11,11 @@ let numPointsPerLine = 60
 let dx = mainArea.width / CGFloat(numPointsPerLine)
 let dy = mainArea.height / CGFloat(numLines)
 
-func bump(
-  amplitude: CGFloat,
-  center: CGFloat,
-  plateauSize: CGFloat,
-  curveSize: CGFloat
-  ) -> (CGFloat) -> CGFloat {
+struct BumpGenerator {
+  let amplitude: CGFloat
+  let center: CGFloat
+  let plateauSize: CGFloat
+  let curveSize: CGFloat
 
   // A nice smooth curve that starts at zero and trends towards 1 asymptotically
   func f(_ x: CGFloat) -> CGFloat {
@@ -29,48 +28,52 @@ func bump(
     return f(x) / (f(x) + f(1 - x))
   }
 
-  return { x in
+  func bump(_ x: CGFloat) -> CGFloat {
     let plateauSize = plateauSize / 2
     let curveSize = curveSize / 2
     let size = plateauSize + curveSize
     let x = x - center
     return amplitude * (1 - g((x * x - plateauSize * plateauSize) / (size * size - plateauSize * plateauSize)))
   }
-}
 
-func noisyBump(
-  amplitude: CGFloat,
-  center: CGFloat,
-  plateauSize: CGFloat,
-  curveSize: CGFloat
-  ) -> (CGFloat) -> Gen<CGFloat> {
-
-  let curve = bump(amplitude: amplitude, center: center, plateauSize: plateauSize, curveSize: curveSize)
-
-  return { x in
-    let y = curve(x)
-    return Gen<CGFloat>.float(in: 0...3).map { $0 * (y / amplitude + 0.5) + y }
+  func noisyBump(_ x: CGFloat) -> some Gen<CGFloat> {
+    let y = self.bump(x)
+    return CGFloat.generator(in: 0...3).map { $0 * (y / amplitude + 0.5) + y }
   }
 }
 
+//let curve = zip(
+//  Gen<CGFloat>.float(in: -30...(-1)),
+//  Gen<CGFloat>.float(in: -60...60)
+//    .map { $0 + canvas.width / 2 },
+//  Gen<CGFloat>.float(in: 0...60),
+//  Gen<CGFloat>.float(in: 10...60)
+//  )
+//  .map(noisyBump(amplitude:center:plateauSize:curveSize:))
 let curve = zip(
-  Gen<CGFloat>.float(in: -30...(-1)),
-  Gen<CGFloat>.float(in: -60...60)
-    .map { $0 + canvas.width / 2 },
-  Gen<CGFloat>.float(in: 0...60),
-  Gen<CGFloat>.float(in: 10...60)
-  )
-  .map(noisyBump(amplitude:center:plateauSize:curveSize:))
+  CGFloat.generator(in: -30 ... -1),
+  CGFloat.generator(in: -60 ... 60)
+    .map { $0 + canvas.width * 0.5 },
+  CGFloat.generator(in: 0...60),
+  CGFloat.generator(in: 10...60)
+).map { BumpGenerator(amplitude: $0, center: $1, plateauSize: $2, curveSize: $3) }
 
-func path(from min: CGFloat, to max: CGFloat, baseline: CGFloat) -> Gen<CGPath> {
-  return Gen<CGPath> { rng in
-    let bumps = curve.array(of: .int(in: 1...4))
-      .run(using: &rng)
+struct PathGenerator: Gen {
+  typealias Value = CGPath
 
+  let min: CGFloat
+  let max: CGFloat
+  let baseline: CGFloat
+
+  let bumps: some Gen<[BumpGenerator]> = curve.array(of: Int.generator(in: 1...4))
+
+  func run<RNG>(using rng: inout RNG) -> CGPath
+  where RNG: RandomNumberGenerator {
+    let bumps = self.bumps.run(using: &rng)
     let path = CGMutablePath()
     path.move(to: CGPoint(x: min, y: baseline))
     stride(from: min, to: max, by: dx).forEach { x in
-      let ys = bumps.map { $0(x).run(using: &rng) }
+      let ys = bumps.map { $0.noisyBump(x).run(using: &rng) }
       let average = ys.reduce(0, +) / CGFloat(ys.count)
       path.addLine(to: CGPoint(x: x, y: baseline + average))
     }
@@ -80,8 +83,8 @@ func path(from min: CGFloat, to max: CGFloat, baseline: CGFloat) -> Gen<CGPath> 
 }
 
 let paths = stride(from: mainArea.minY, to: mainArea.maxY, by: dy)
-  .map { path(from: mainArea.minX, to: mainArea.maxX, baseline: $0) }
-  .sequence()
+  .map { PathGenerator(min: mainArea.minX, max: mainArea.maxX, baseline: $0) }
+  .traverse()
 
 let colors = [
   UIColor(red: 0.47, green: 0.95, blue: 0.69, alpha: 1),
@@ -107,7 +110,7 @@ let image = paths.map { paths in
   }
 }
 
-let imageView = image.map(UIImageView.init)
+let imageView = image.map { UIImageView(image: $0) }
 
 import PlaygroundSupport
 PlaygroundPage.current.liveView = imageView.run()
