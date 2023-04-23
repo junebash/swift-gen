@@ -1,4 +1,3 @@
-/// A composable, transformable context for generating random values.
 public struct AnyGen<Value>: Gen, Sendable {
   @usableFromInline
   internal var _run: @Sendable (inout any RandomNumberGenerator) -> Value
@@ -22,5 +21,11 @@ public struct AnyGen<Value>: Gen, Sendable {
     var anyRNG: any RandomNumberGenerator = rng
     defer { rng = anyRNG as! G }
     return self._run(&anyRNG)
+  }
+}
+
+extension Gen where Self: Sendable {
+  public func eraseToAnyGen() -> AnyGen<Value> {
+    AnyGen(self)
   }
 }

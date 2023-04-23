@@ -1,3 +1,4 @@
+/// A composable, transformable context for generating random values.
 public protocol Gen<Value> {
   associatedtype Value
 
